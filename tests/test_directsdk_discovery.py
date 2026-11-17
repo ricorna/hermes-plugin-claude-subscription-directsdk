@@ -13,7 +13,22 @@ def test_installed_plugin_registers_and_constructs_client_without_native_process
     client = profile.create_client(command="unused-offline-native", env={})
     try:
         module = sys.modules[type(client).__module__]
-        assert Path(module.__file__).resolve().parent == (Path(os.environ["HERMES_HOME"]) / "plugins" / PLUGIN_NAME).resolve()
+        import providers
+
+        installed = Path(os.environ["HERMES_HOME"]) / "plugins" / PLUGIN_NAME
+        package = sys.modules[type(profile).__module__]
+        # Core may load an immutable snapshot rather than the installed directory.
+        # Require the registered profile and client to share that exact package,
+        # and prove the loaded code is the installed plugin, not a flat fallback.
+        assert providers.get_provider_profile(PLUGIN_NAME) is profile
+        assert package.__name__.startswith("_hermes_user_provider_")
+        assert package.profile is profile
+        assert module.__name__ == package.__name__ + ".directsdk"
+        assert type(client) is module.Client
+        loaded = Path(package.__file__).resolve().parent
+        assert Path(module.__file__).resolve() == loaded / "directsdk.py"
+        for filename in ("__init__.py", "directsdk.py", "directsdk_setup.py", "model_catalog.py", "plugin.yaml"):
+            assert (loaded / filename).read_bytes() == (installed / filename).read_bytes()
         assert callable(client.chat.completions.create)
         assert profile.auth_type == "external_process" and profile.process_command == "claude"
         assert profile.supports_health_check is False
