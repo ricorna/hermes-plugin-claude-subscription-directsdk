@@ -28,6 +28,14 @@ except ImportError:
     from directsdk_setup import INSTALL_HINT, _resolve as resolve_claude
 
 
+class ClaudeAPIError(RuntimeError):
+    """First upstream failure, with the HTTP status Hermes uses for failover."""
+
+    def __init__(self, message, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class ClaudeCodeMissing(RuntimeError):
     """The official Claude Code CLI this transport drives is not installed (or not on PATH)."""
 
@@ -534,7 +542,18 @@ class Client:
                 admission = request.admission
                 if admission.used:
                     if admission.status != 200 or not admission.capture.complete:
-                        raise RuntimeError('Incomplete upstream response' + (': ' + native_error if native_error else ''))
+                        # A native retry is intentionally denied. Its 400 is not the
+                        # cause of the first failure and must not drive host failover.
+                        first = (
+                            f'first upstream attempt: status {admission.status}, '
+                            f'capture {"complete" if admission.capture.complete else "incomplete"}'
+                        )
+                        if admission.failure:
+                            first += f', relay failure {admission.failure}'
+                        first += f', native retries denied: {admission.denied}'
+                        status = admission.status if isinstance(admission.status, int) and admission.status >= 400 else None
+                        # Do not log response bodies, native output, or admission URLs.
+                        raise ClaudeAPIError(f'Incomplete upstream response ({first})', status)
                     assistants = [admission.capture.message]
                     stopped = True
                 native_failure_handled = admission.denied or (admission.used and assistants[0].get('stop_reason') == 'refusal')
