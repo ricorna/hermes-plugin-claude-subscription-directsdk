@@ -62,7 +62,10 @@ class Capture:
     def _block_stop(self, event):
         index = event['index']
         if index in self.arguments:
-            self.message['content'][index]['input'] = json.loads(self.arguments.pop(index))
+            # Native may stream an empty delta for a no-argument tool.
+            # Preserve rejection of nonempty malformed JSON.
+            raw = self.arguments.pop(index)
+            self.message['content'][index]['input'] = json.loads(raw) if raw.strip() else {}
 
     def _delta(self, event):
         self.message.update(event.get('delta', {}))
